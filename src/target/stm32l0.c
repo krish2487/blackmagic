@@ -233,13 +233,16 @@ static void stm32l_add_flash(target *t,
                              uint32_t addr, size_t length, size_t erasesize)
 {
 	struct target_flash *f = calloc(1, sizeof(*f));
+	if (!f) {			/* calloc failed: heap exhaustion */
+		DEBUG_WARN("calloc: failed in %s\n", __func__);
+		return;
+	}
+
 	f->start = addr;
 	f->length = length;
 	f->blocksize = erasesize;
 	f->erase = stm32lx_nvm_prog_erase;
-	f->write = target_flash_write_buffered;
-	f->done = target_flash_done_buffered;
-	f->write_buf = stm32lx_nvm_prog_write;
+	f->write = stm32lx_nvm_prog_write;
 	f->buf_size = erasesize/2;
 	target_add_flash(t, f);
 }
@@ -247,12 +250,16 @@ static void stm32l_add_flash(target *t,
 static void stm32l_add_eeprom(target *t, uint32_t addr, size_t length)
 {
 	struct target_flash *f = calloc(1, sizeof(*f));
+	if (!f) {			/* calloc failed: heap exhaustion */
+		DEBUG_WARN("calloc: failed in %s\n", __func__);
+		return;
+	}
+
 	f->start = addr;
 	f->length = length;
 	f->blocksize = 4;
 	f->erase = stm32lx_nvm_data_erase;
 	f->write = stm32lx_nvm_data_write;
-	f->align = 1;
 	target_add_flash(t, f);
 }
 
@@ -261,35 +268,28 @@ static void stm32l_add_eeprom(target *t, uint32_t addr, size_t length)
     STM32L0xx parts as well as the STM32L1xx's. */
 bool stm32l0_probe(target* t)
 {
-	uint32_t idcode;
-
-	idcode = target_mem_read32(t, STM32L1_DBGMCU_IDCODE_PHYS) & 0xfff;
-	switch (idcode) {
+	switch (t->idcode) {
 	case 0x416:                   /* CAT. 1 device */
 	case 0x429:                   /* CAT. 2 device */
 	case 0x427:                   /* CAT. 3 device */
 	case 0x436:                   /* CAT. 4 device */
 	case 0x437:                   /* CAT. 5 device  */
-		t->idcode = idcode;
 		t->driver = "STM32L1x";
 		target_add_ram(t, 0x20000000, 0x14000);
 		stm32l_add_flash(t, 0x8000000, 0x80000, 0x100);
 		//stm32l_add_eeprom(t, 0x8080000, 0x4000);
 		target_add_commands(t, stm32lx_cmd_list, "STM32L1x");
 		return true;
-	}
-
-	idcode = target_mem_read32(t, STM32L0_DBGMCU_IDCODE_PHYS) & 0xfff;
-	switch (idcode) {
 	case 0x457:                   /* STM32L0xx Cat1 */
 	case 0x425:                   /* STM32L0xx Cat2 */
 	case 0x417:                   /* STM32L0xx Cat3 */
 	case 0x447:                   /* STM32L0xx Cat5 */
-		t->idcode = idcode;
 		t->driver = "STM32L0x";
-		target_add_ram(t, 0x20000000, 0x2000);
+		target_add_ram(t, 0x20000000, 0x5000);
 		stm32l_add_flash(t, 0x8000000, 0x10000, 0x80);
-		stm32l_add_eeprom(t, 0x8080000, 0x800);
+		stm32l_add_flash(t, 0x8010000, 0x10000, 0x80);
+		stm32l_add_flash(t, 0x8020000, 0x10000, 0x80);
+		stm32l_add_eeprom(t, 0x8080000, 0x1800);
 		target_add_commands(t, stm32lx_cmd_list, "STM32L0x");
 		return true;
 	}
@@ -368,8 +368,10 @@ static int stm32lx_nvm_prog_erase(struct target_flash* f,
 	while (len > 0) {
 		/* Write first word of page to 0 */
 		target_mem_write32(t, addr, 0);
-
-		len  -= page_size;
+		if (len > page_size)
+			len  -= page_size;
+		else
+			len = 0;
 		addr += page_size;
 	}
 
@@ -430,7 +432,6 @@ static int stm32lx_nvm_prog_write(struct target_flash *f,
 	return 0;
 }
 
-
 /** Erase a region of data flash using operations through the debug
     interface .  The flash is erased for all pages from addr to
     addr+len, inclusive, on a word boundary.  NVM register file
@@ -462,7 +463,10 @@ static int stm32lx_nvm_data_erase(struct target_flash *f,
 		/* Write first word of page to 0 */
 		target_mem_write32(t, addr, 0);
 
-		len  -= page_size;
+		if (len > page_size)
+			len  -= page_size;
+		else
+			len = 0;
 		addr += page_size;
 	}
 
@@ -600,6 +604,8 @@ static bool stm32lx_cmd_option(target* t, int argc, char** argv)
                 return true;
         }
 
+        if (argc < 2 )
+                 goto usage;
         size_t cb = strlen(argv[1]);
 
         if (argc == 2 && !strncasecmp(argv[1], "obl_launch", cb)) {
@@ -629,10 +635,6 @@ static bool stm32lx_cmd_option(target* t, int argc, char** argv)
                 if (!stm32lx_option_write(t, addr, val))
                         tc_printf(t, "option write failed\n");
         }
-        else if (argc == 2 && !strncasecmp(argv[1], "show", cb))
-                ;
-        else
-                goto usage;
 
         /* Report the current option values */
         for(unsigned i = 0; i < opt_size; i += sizeof(uint32_t)) {

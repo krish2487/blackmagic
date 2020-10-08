@@ -60,12 +60,16 @@ static const uint16_t lmi_flash_write_stub[] = {
 static void lmi_add_flash(target *t, size_t length)
 {
 	struct target_flash *f = calloc(1, sizeof(*f));
+	if (!f) {			/* calloc failed: heap exhaustion */
+		DEBUG_WARN("calloc: failed in %s\n", __func__);
+		return;
+	}
+
 	f->start = 0;
 	f->length = length;
 	f->blocksize = 0x400;
 	f->erase = lmi_flash_erase;
 	f->write = lmi_flash_write;
-	f->align = 4;
 	f->erased = 0xff;
 	target_add_flash(t, f);
 }
@@ -84,14 +88,35 @@ bool lmi_probe(target *t)
 		t->driver = lmi_driver_str;
 		target_add_ram(t, 0x20000000, 0x10000);
 		lmi_add_flash(t, 0x80000);
+		/* On Tiva targets, asserting SRST results in the debug
+		 * logic also being reset.  We can't assert SRST and must
+		 * only use the AIRCR SYSRESETREQ. */
+		t->target_options |= CORTEXM_TOPT_INHIBIT_SRST;
+		return true;
+
+	case 0x1022:    /* TM4C1230C3PM */
+		t->driver = lmi_driver_str;
+		target_add_ram(t, 0x20000000, 0x6000);
+		lmi_add_flash(t, 0x10000);
+		t->target_options |= CORTEXM_TOPT_INHIBIT_SRST;
+		return true;
+
+	case 0x101F:    /* TM4C1294NCPDT */
+		t->driver = lmi_driver_str;
+		target_add_ram(t, 0x20000000, 0x40000);
+		lmi_add_flash(t, 0x100000);
+		t->target_options |= CORTEXM_TOPT_INHIBIT_SRST;
 		return true;
 	}
 	return false;
 }
 
-int lmi_flash_erase(struct target_flash *f, target_addr addr, size_t len)
+static int lmi_flash_erase(struct target_flash *f, target_addr addr, size_t len)
 {
 	target  *t = f->t;
+
+	target_check_error(t);
+
 	while(len) {
 		target_mem_write32(t, LMI_FLASH_FMA, addr);
 		target_mem_write32(t, LMI_FLASH_FMC,
@@ -99,20 +124,30 @@ int lmi_flash_erase(struct target_flash *f, target_addr addr, size_t len)
 		while (target_mem_read32(t, LMI_FLASH_FMC) &
 		       LMI_FLASH_FMC_ERASE);
 
-		len -= BLOCK_SIZE;
+		if (target_check_error(t))
+			return -1;
+		if (len > BLOCK_SIZE)
+			len -= BLOCK_SIZE;
+		else
+			len = 0;
 		addr += BLOCK_SIZE;
 	}
 	return 0;
 }
 
-int lmi_flash_write(struct target_flash *f,
+static int lmi_flash_write(struct target_flash *f,
                     target_addr dest, const void *src, size_t len)
 {
 	target  *t = f->t;
 
+	target_check_error(t);
+
 	target_mem_write(t, SRAM_BASE, lmi_flash_write_stub,
 	                 sizeof(lmi_flash_write_stub));
 	target_mem_write(t, STUB_BUFFER_BASE, src, len);
+
+	if (target_check_error(t))
+		return -1;
+
 	return cortexm_run_stub(t, SRAM_BASE, dest, STUB_BUFFER_BASE, len, 0);
 }
-

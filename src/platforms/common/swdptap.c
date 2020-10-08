@@ -18,19 +18,27 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* This file implements the low-level SW-DP interface. */
+/* This file implements the SW-DP interface. */
 
 #include "general.h"
 #include "swdptap.h"
 
-int swdptap_init(void)
-{
-	return 0;
-}
+enum {
+	SWDIO_STATUS_FLOAT = 0,
+	SWDIO_STATUS_DRIVE
+};
+static void swdptap_turnaround(int dir) __attribute__ ((optimize(3)));
+static uint32_t swdptap_seq_in(int ticks) __attribute__ ((optimize(3)));
+static bool swdptap_seq_in_parity(uint32_t *ret, int ticks)
+	__attribute__ ((optimize(3)));
+static void swdptap_seq_out(uint32_t MS, int ticks)
+	__attribute__ ((optimize(3)));
+static void swdptap_seq_out_parity(uint32_t MS, int ticks)
+	__attribute__ ((optimize(3)));
 
-static void swdptap_turnaround(uint8_t dir)
+static void swdptap_turnaround(int dir)
 {
-	static uint8_t olddir = 0;
+	static int olddir = SWDIO_STATUS_FLOAT;
 
 	/* Don't turnaround if direction not changing */
 	if(dir == olddir) return;
@@ -40,41 +48,128 @@ static void swdptap_turnaround(uint8_t dir)
 	DEBUG("%s", dir ? "\n-> ":"\n<- ");
 #endif
 
-	if(dir)
+	if(dir == SWDIO_STATUS_FLOAT)
 		SWDIO_MODE_FLOAT();
 	gpio_set(SWCLK_PORT, SWCLK_PIN);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
 	gpio_clear(SWCLK_PORT, SWCLK_PIN);
-	if(!dir)
+	if(dir == SWDIO_STATUS_DRIVE)
 		SWDIO_MODE_DRIVE();
 }
 
-bool swdptap_bit_in(void)
+static uint32_t swdptap_seq_in(int ticks)
 {
-	uint16_t ret;
+	uint32_t index = 1;
+	uint32_t ret = 0;
+	int len = ticks;
 
-	swdptap_turnaround(1);
-
-	ret = gpio_get(SWDIO_PORT, SWDIO_PIN);
-	gpio_set(SWCLK_PORT, SWCLK_PIN);
-	gpio_clear(SWCLK_PORT, SWCLK_PIN);
+	swdptap_turnaround(SWDIO_STATUS_FLOAT);
+	while (len--) {
+		int res;
+		res = gpio_get(SWDIO_PORT, SWDIO_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		if (res)
+			ret |= index;
+		index <<= 1;
+		gpio_clear(SWCLK_PORT, SWCLK_PIN);
+	}
 
 #ifdef DEBUG_SWD_BITS
-	DEBUG("%d", ret?1:0);
+	for (int i = 0; i < len; i++)
+		DEBUG("%d", (ret & (1 << i)) ? 1 : 0);
 #endif
-
-	return ret != 0;
+	return ret;
 }
 
-void swdptap_bit_out(bool val)
+static bool swdptap_seq_in_parity(uint32_t *ret, int ticks)
+{
+	uint32_t index = 1;
+	uint32_t res = 0;
+	bool bit;
+	int len = ticks;
+
+	swdptap_turnaround(SWDIO_STATUS_FLOAT);
+	while (len--) {
+		bit = gpio_get(SWDIO_PORT, SWDIO_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		if (bit)
+			res |= index;
+		index <<= 1;
+		gpio_clear(SWCLK_PORT, SWCLK_PIN);
+	}
+	int parity = __builtin_popcount(res);
+	bit = gpio_get(SWDIO_PORT, SWDIO_PIN);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
+	if (bit)
+		parity++;
+	else
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+	gpio_clear(SWCLK_PORT, SWCLK_PIN);
+#ifdef DEBUG_SWD_BITS
+	for (int i = 0; i < len; i++)
+		DEBUG("%d", (res & (1 << i)) ? 1 : 0);
+#endif
+	*ret = res;
+	/* Terminate the read cycle now */
+	swdptap_turnaround(SWDIO_STATUS_DRIVE);
+	return (parity & 1);
+}
+
+static void swdptap_seq_out(uint32_t MS, int ticks)
 {
 #ifdef DEBUG_SWD_BITS
-	DEBUG("%d", val);
+	for (int i = 0; i < ticks; i++)
+		DEBUG("%d", (MS & (1 << i)) ? 1 : 0);
 #endif
+	swdptap_turnaround(SWDIO_STATUS_DRIVE);
+	gpio_set_val(SWDIO_PORT, SWDIO_PIN, MS & 1);
+	while (ticks--) {
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		MS >>= 1;
+		gpio_set_val(SWDIO_PORT, SWDIO_PIN, MS & 1);
+		gpio_clear(SWCLK_PORT, SWCLK_PIN);
+		gpio_clear(SWCLK_PORT, SWCLK_PIN);
+	}
+}
 
-	swdptap_turnaround(0);
-
-	gpio_set_val(SWDIO_PORT, SWDIO_PIN, val);
+static void swdptap_seq_out_parity(uint32_t MS, int ticks)
+{
+	int parity = __builtin_popcount(MS);
+#ifdef DEBUG_SWD_BITS
+	for (int i = 0; i < ticks; i++)
+		DEBUG("%d", (MS & (1 << i)) ? 1 : 0);
+#endif
+	swdptap_turnaround(SWDIO_STATUS_DRIVE);
+	gpio_set_val(SWDIO_PORT, SWDIO_PIN, MS & 1);
+	MS >>= 1;
+	while (ticks--) {
+		gpio_set(SWCLK_PORT, SWCLK_PIN);
+		gpio_set_val(SWDIO_PORT, SWDIO_PIN, MS & 1);
+		MS >>= 1;
+		gpio_clear(SWCLK_PORT, SWCLK_PIN);
+	}
+	gpio_set_val(SWDIO_PORT, SWDIO_PIN, parity & 1);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
+	gpio_set(SWCLK_PORT, SWCLK_PIN);
 	gpio_set(SWCLK_PORT, SWCLK_PIN);
 	gpio_clear(SWCLK_PORT, SWCLK_PIN);
 }
 
+swd_proc_t swd_proc;
+
+int swdptap_init(void)
+{
+	swd_proc.swdptap_seq_in  = swdptap_seq_in;
+	swd_proc.swdptap_seq_in_parity  = swdptap_seq_in_parity;
+	swd_proc.swdptap_seq_out = swdptap_seq_out;
+	swd_proc.swdptap_seq_out_parity  = swdptap_seq_out_parity;
+
+	return 0;
+}

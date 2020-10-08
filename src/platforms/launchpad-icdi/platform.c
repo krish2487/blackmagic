@@ -62,7 +62,7 @@ platform_init(void)
 
 	gpio_enable_ahb_aperture();
 
-	gpio_mode_setup(TMS_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, TMS_PIN);
+	gpio_mode_setup(TMS_PORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, TMS_PIN);
 	gpio_mode_setup(TCK_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, TCK_PIN);
 	gpio_mode_setup(TDI_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, TDI_PIN);
 	gpio_mode_setup(TDO_PORT, GPIO_MODE_INPUT, GPIO_PUPD_NONE, TDO_PIN);
@@ -115,23 +115,23 @@ void platform_delay(uint32_t ms)
 
 const char *platform_target_voltage(void)
 {
-	return "not supported";
+	return NULL;
 }
 
-char *serialno_read(char *s)
+char *serial_no_read(char *s, int max)
 {
 	/* FIXME: Store a unique serial number somewhere and retreive here */
-	uint32_t unique_id = 1;
+	uint32_t unique_id = SERIAL_NO;
         int i;
 
         /* Fetch serial number from chip's unique ID */
         for(i = 0; i < 8; i++) {
                 s[7-i] = ((unique_id >> (4*i)) & 0xF) + '0';
         }
-        for(i = 0; i < 8; i++)
+        for(i = 0; i < max - 1; i++)
                 if(s[i] > '9')
                         s[i] += 'A' - '9' - 1;
-	s[8] = 0;
+	s[max] = 0;
 
 	return s;
 }

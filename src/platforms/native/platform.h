@@ -30,15 +30,18 @@
 
 #define PLATFORM_HAS_TRACESWO
 #define PLATFORM_HAS_POWER_SWITCH
+
 #ifdef ENABLE_DEBUG
-#define PLATFORM_HAS_DEBUG
-#define USBUART_DEBUG
+# define PLATFORM_HAS_DEBUG
+# define USBUART_DEBUG
+extern bool debug_bmp;
+int usbuart_debug_write(const char *buf, size_t len);
 #endif
+
 #define BOARD_IDENT             "Black Magic Probe"
 #define BOARD_IDENT_DFU	        "Black Magic Probe (Upgrade)"
 #define BOARD_IDENT_UPD	        "Black Magic Probe (DFU Upgrade)"
 #define DFU_IDENT               "Black Magic Firmware Upgrade"
-#define DFU_IFACE_STRING        "@Internal Flash   /0x08000000/8*001Ka,120*001Kg"
 #define UPD_IFACE_STRING        "@Internal Flash   /0x08000000/8*001Kg"
 
 /* Important pin mappings for STM32 implementation:
@@ -47,7 +50,7 @@
  * LED1 = 	PB10	(Yellow LED : Idle)
  * LED2 = 	PB11	(Red LED    : Error)
  *
- * TPWR = 	RB0 (input) -- analogue on mini design ADC1, ch8
+ * TPWR = 	PB0 (input) -- analogue on mini design ADC1, ch8
  * nTRST = 	PB1 (output) [blackmagic]
  * PWR_BR = 	PB1 (output) [blackmagic_mini] -- supply power to the target, active low
  * TMS_DIR =    PA1 (output) [blackmagic_mini v2.1] -- choose direction of the TCK pin, input low, output high
@@ -109,27 +112,34 @@
 #define LED_IDLE_RUN	LED_1
 #define LED_ERROR	LED_2
 
+# define SWD_CR   GPIO_CRL(SWDIO_PORT)
+# define SWD_CR_MULT (1 << (4 << 2))
+
 #define TMS_SET_MODE() do { \
 	gpio_set(TMS_DIR_PORT, TMS_DIR_PIN); \
 	gpio_set_mode(TMS_PORT, GPIO_MODE_OUTPUT_50_MHZ, \
 	              GPIO_CNF_OUTPUT_PUSHPULL, TMS_PIN); \
 } while(0)
 #define SWDIO_MODE_FLOAT() do { \
-	gpio_set_mode(SWDIO_PORT, GPIO_MODE_INPUT, \
-	              GPIO_CNF_INPUT_FLOAT, SWDIO_PIN); \
-	gpio_clear(SWDIO_DIR_PORT, SWDIO_DIR_PIN); \
+	uint32_t cr = SWD_CR; \
+	cr  &= ~(0xf * SWD_CR_MULT); \
+	cr  |=  (0x4 * SWD_CR_MULT); \
+	GPIO_BRR(SWDIO_DIR_PORT) = SWDIO_DIR_PIN; \
+	SWD_CR = cr; \
 } while(0)
 #define SWDIO_MODE_DRIVE() do { \
-	gpio_set(SWDIO_DIR_PORT, SWDIO_DIR_PIN); \
-	gpio_set_mode(SWDIO_PORT, GPIO_MODE_OUTPUT_50_MHZ, \
-	              GPIO_CNF_OUTPUT_PUSHPULL, SWDIO_PIN); \
+	uint32_t cr = SWD_CR; \
+	cr  &= ~(0xf * SWD_CR_MULT); \
+	cr  |=  (0x1 * SWD_CR_MULT); \
+	GPIO_BSRR(SWDIO_DIR_PORT) = SWDIO_DIR_PIN; \
+	SWD_CR = cr; \
 } while(0)
 #define UART_PIN_SETUP() do { \
 	gpio_set_mode(USBUSART_PORT, GPIO_MODE_OUTPUT_2_MHZ, \
 	              GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, USBUSART_TX_PIN); \
 } while(0)
 
-#define USB_DRIVER stm32f103_usb_driver
+#define USB_DRIVER st_usbfs_v1_usb_driver
 #define USB_IRQ    NVIC_USB_LP_CAN_RX0_IRQ
 #define USB_ISR    usb_lp_can_rx0_isr
 /* Interrupt priorities.  Low numbers are high priority.
@@ -159,23 +169,41 @@
 #define TRACE_IRQ   NVIC_TIM3_IRQ
 #define TRACE_ISR   tim3_isr
 
-#ifdef ENABLE_DEBUG
-extern bool debug_bmp;
-int usbuart_debug_write(const char *buf, size_t len);
-
-#define DEBUG printf
-#else
-#define DEBUG(...)
-#endif
-
 #define SET_RUN_STATE(state)	{running_status = (state);}
 #define SET_IDLE_STATE(state)	{gpio_set_val(LED_PORT, LED_IDLE_RUN, state);}
 #define SET_ERROR_STATE(state)	{gpio_set_val(LED_PORT, LED_ERROR, state);}
 
-/* Use newlib provided integer only stdio functions */
+/*
+ * Use newlib provided integer only stdio functions
+ */
+
+/* sscanf */
+#ifdef sscanf
+#undef sscanf
 #define sscanf siscanf
+#else
+#define sscanf siscanf
+#endif
+/* sprintf */
+#ifdef sprintf
+#undef sprintf
 #define sprintf siprintf
-#define snprintf sniprintf
+#else
+#define sprintf siprintf
+#endif
+/* vasprintf */
+#ifdef vasprintf
+#undef vasprintf
 #define vasprintf vasiprintf
+#else
+#define vasprintf vasiprintf
+#endif
+/* snprintf */
+#ifdef snprintf
+#undef snprintf
+#define snprintf sniprintf
+#else
+#define snprintf sniprintf
+#endif
 
 #endif

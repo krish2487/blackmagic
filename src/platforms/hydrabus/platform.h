@@ -36,7 +36,6 @@
 #define BOARD_IDENT       "Black Magic Probe (HydraBus), (Firmware " FIRMWARE_VERSION ")"
 #define BOARD_IDENT_DFU   "Black Magic (Upgrade) for HydraBus, (Firmware " FIRMWARE_VERSION ")"
 #define DFU_IDENT         "Black Magic Firmware Upgrade (HydraBus)"
-#define DFU_IFACE_STRING  "@Internal Flash   /0x08000000/1*016Ka,3*016Kg,1*064Kg,7*128Kg"
 
 /* Important pin mappings for STM32 implementation:
  *
@@ -136,8 +135,6 @@
 #define TRACE_IRQ   NVIC_TIM3_IRQ
 #define TRACE_ISR   tim3_isr
 
-#define DEBUG(...)
-
 #define gpio_set_val(port, pin, val) do {	\
 	if(val)					\
 		gpio_set((port), (pin));	\
@@ -154,11 +151,38 @@ static inline int platform_hwversion(void)
 	return 0;
 }
 
-/* Use newlib provided integer only stdio functions */
+/*
+ * Use newlib provided integer only stdio functions
+ */
+
+/* sscanf */
+#ifdef sscanf
+#undef sscanf
 #define sscanf siscanf
+#else
+#define sscanf siscanf
+#endif
+/* sprintf */
+#ifdef sprintf
+#undef sprintf
 #define sprintf siprintf
+#else
+#define sprintf siprintf
+#endif
+/* vasprintf */
+#ifdef vasprintf
+#undef vasprintf
 #define vasprintf vasiprintf
+#else
+#define vasprintf vasiprintf
+#endif
+/* snprintf */
+#ifdef snprintf
+#undef snprintf
 #define snprintf sniprintf
+#else
+#define snprintf sniprintf
+#endif
 
 #endif
 

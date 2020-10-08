@@ -19,7 +19,7 @@
 #include "general.h"
 #include "usbdfu.h"
 
-#include <libopencm3/stm32/f1/flash.h>
+#include <libopencm3/stm32/flash.h>
 #include <libopencm3/cm3/scb.h>
 
 #define FLASH_OBP_RDP 0x1FFFF800
@@ -77,11 +77,25 @@ void dfu_protect(dfu_mode_t mode)
 	}
 #endif
     }
-    else if (mode == UPD_MODE) {
+    /* There is no way we can update the bootloader with a programm running
+	 * on the same device when the bootloader pages are write
+	 * protected or the device is read protected!
+	 *
+	 * Erasing option bytes to remove write protection will make the
+	 * device read protected. Read protection means that the first pages
+	 * get write protected again (PM0075, 2.4.1 Read protection.)
+	 *
+	 * Removing read protection after option erase results in device mass
+	 * erase, crashing the update (PM0075, 2.4.2, Unprotection, Case 1).
+     */
+#if 0
+    else if ((mode == UPD_MODE) && ((FLASH_WRPR & 0x03) != 0x03)) {
 		flash_unlock();
 		FLASH_CR = 0;
 		flash_erase_option_bytes();
+		flash_program_option_bytes(FLASH_OBP_RDP, FLASH_OBP_RDP_KEY);
     }
+#endif
 }
 
 void dfu_jump_app_if_valid(void)

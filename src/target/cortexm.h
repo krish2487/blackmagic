@@ -22,11 +22,13 @@
 #include "target.h"
 #include "adiv5.h"
 
+extern long cortexm_wait_timeout;
 /* Private peripheral bus base address */
 #define CORTEXM_PPB_BASE	0xE0000000
 
 #define CORTEXM_SCS_BASE	(CORTEXM_PPB_BASE + 0xE000)
 
+#define CORTEXM_CPUID		(CORTEXM_SCS_BASE + 0xD00)
 #define CORTEXM_AIRCR		(CORTEXM_SCS_BASE + 0xD0C)
 #define CORTEXM_CFSR		(CORTEXM_SCS_BASE + 0xD28)
 #define CORTEXM_HFSR		(CORTEXM_SCS_BASE + 0xD2C)
@@ -36,6 +38,17 @@
 #define CORTEXM_DCRSR		(CORTEXM_SCS_BASE + 0xDF4)
 #define CORTEXM_DCRDR		(CORTEXM_SCS_BASE + 0xDF8)
 #define CORTEXM_DEMCR		(CORTEXM_SCS_BASE + 0xDFC)
+
+/* Cache identification */
+#define CORTEXM_CLIDR		(CORTEXM_SCS_BASE + 0xD78)
+#define CORTEXM_CTR		(CORTEXM_SCS_BASE + 0xD7C)
+#define CORTEXM_CCSIDR		(CORTEXM_SCS_BASE + 0xD80)
+#define CORTEXM_CSSELR		(CORTEXM_SCS_BASE + 0xD84)
+
+/* Cache maintenance operations */
+#define CORTEXM_ICIALLU		(CORTEXM_SCS_BASE + 0xF50)
+#define CORTEXM_DCCMVAC		(CORTEXM_SCS_BASE + 0xF68)
+#define CORTEXM_DCCIMVAC	(CORTEXM_SCS_BASE + 0xF70)
 
 #define CORTEXM_FPB_BASE	(CORTEXM_PPB_BASE + 0x2000)
 
@@ -132,10 +145,12 @@
 #define CORTEXM_FPB_CTRL_KEY		(1 << 1)
 #define CORTEXM_FPB_CTRL_ENABLE		(1 << 0)
 
-/* Data Watchpoint and Trace Mask Register (DWT_MASKx) */
-#define CORTEXM_DWT_MASK_BYTE		(0 << 0)
-#define CORTEXM_DWT_MASK_HALFWORD	(1 << 0)
-#define CORTEXM_DWT_MASK_WORD		(3 << 0)
+/* Data Watchpoint and Trace Mask Register (DWT_MASKx)
+*  The value here is the number of address bits we mask out */
+#define CORTEXM_DWT_MASK_BYTE		(0)
+#define CORTEXM_DWT_MASK_HALFWORD	(1)
+#define CORTEXM_DWT_MASK_WORD		(2)
+#define CORTEXM_DWT_MASK_DWORD		(3)
 
 /* Data Watchpoint and Trace Function Register (DWT_FUNCTIONx) */
 #define CORTEXM_DWT_FUNC_MATCHED	(1 << 24)
@@ -161,9 +176,10 @@ ADIv5_AP_t *cortexm_ap(target *t);
 
 bool cortexm_attach(target *t);
 void cortexm_detach(target *t);
-void cortexm_halt_resume(target *t, bool step);
 int cortexm_run_stub(target *t, uint32_t loadaddr,
                      uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3);
+int cortexm_mem_write_sized(
+	target *t, target_addr dest, const void *src, size_t len, enum align align);
 
 #endif
 

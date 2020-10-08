@@ -58,7 +58,11 @@ static const struct usb_device_descriptor dev = {
 	.bDeviceClass = 0xEF,		/* Miscellaneous Device */
 	.bDeviceSubClass = 2,		/* Common Class */
 	.bDeviceProtocol = 1,		/* Interface Association */
-	.bMaxPacketSize0 = 64,
+#ifdef LM4F
+	.bMaxPacketSize0 = 64,		/*Fixed for icdi*/
+#else
+	.bMaxPacketSize0 = 32,
+#endif
 	.idVendor = 0x1D50,
 	.idProduct = 0x6018,
 	.bcdDevice = 0x0100,
@@ -188,7 +192,7 @@ static const struct usb_endpoint_descriptor uart_data_endp[] = {{
 	.bDescriptorType = USB_DT_ENDPOINT,
 	.bEndpointAddress = 0x03,
 	.bmAttributes = USB_ENDPOINT_ATTR_BULK,
-	.wMaxPacketSize = CDCACM_PACKET_SIZE,
+	.wMaxPacketSize = CDCACM_PACKET_SIZE / 2,
 	.bInterval = 1,
 }, {
 	.bLength = USB_DT_ENDPOINT_SIZE,
@@ -390,7 +394,11 @@ static const struct usb_config_descriptor config = {
 	.interface = ifaces,
 };
 
-char serial_no[9];
+#if defined(STM32L0) || defined(STM32F3) || defined(STM32F4)
+static char serial_no[13];
+#else
+static char serial_no[9];
+#endif
 
 static const char *usb_strings[] = {
 	"Black Sphere Technologies",
@@ -415,7 +423,7 @@ static void dfu_detach_complete(usbd_device *dev, struct usb_setup_data *req)
 	scb_reset_core();
 }
 
-static int cdcacm_control_request(usbd_device *dev,
+static enum usbd_request_return_codes  cdcacm_control_request(usbd_device *dev,
 		struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
 		void (**complete)(usbd_device *dev, struct usb_setup_data *req))
 {
@@ -429,22 +437,23 @@ static int cdcacm_control_request(usbd_device *dev,
 		cdcacm_set_modem_state(dev, req->wIndex, true, true);
 		/* Ignore if not for GDB interface */
 		if(req->wIndex != 0)
-			return 1;
+			return USBD_REQ_HANDLED;
 
 		cdcacm_gdb_dtr = req->wValue & 1;
 
-		return 1;
+		return USBD_REQ_HANDLED;
 	case USB_CDC_REQ_SET_LINE_CODING:
 		if(*len < sizeof(struct usb_cdc_line_coding))
-			return 0;
+			return USBD_REQ_NOTSUPP;
 
 		switch(req->wIndex) {
 		case 2:
 			usbuart_set_line_coding((struct usb_cdc_line_coding*)*buf);
+			return USBD_REQ_HANDLED;
 		case 0:
-			return 1; /* Ignore on GDB Port */
+			return USBD_REQ_HANDLED; /* Ignore on GDB Port */
 		default:
-			return 0;
+			return USBD_REQ_NOTSUPP;
 		}
 	case DFU_GETSTATUS:
 		if(req->wIndex == DFU_IF_NO) {
@@ -456,16 +465,17 @@ static int cdcacm_control_request(usbd_device *dev,
 			(*buf)[5] = 0;	/* iString not used here */
 			*len = 6;
 
-			return 1;
+			return USBD_REQ_HANDLED;
 		}
+		return USBD_REQ_NOTSUPP;
 	case DFU_DETACH:
 		if(req->wIndex == DFU_IF_NO) {
 			*complete = dfu_detach_complete;
-			return 1;
+			return USBD_REQ_HANDLED;
 		}
-		return 0;
+		return USBD_REQ_NOTSUPP;
 	}
-	return 0;
+	return USBD_REQ_NOTSUPP;
 }
 
 int cdcacm_get_config(void)
@@ -511,7 +521,7 @@ static void cdcacm_set_config(usbd_device *dev, uint16_t wValue)
 
 	/* Serial interface */
 	usbd_ep_setup(dev, 0x03, USB_ENDPOINT_ATTR_BULK,
-	              CDCACM_PACKET_SIZE, usbuart_usb_out_cb);
+	              CDCACM_PACKET_SIZE / 2, usbuart_usb_out_cb);
 	usbd_ep_setup(dev, 0x83, USB_ENDPOINT_ATTR_BULK,
 	              CDCACM_PACKET_SIZE, usbuart_usb_in_cb);
 	usbd_ep_setup(dev, 0x84, USB_ENDPOINT_ATTR_INTERRUPT, 16, NULL);
@@ -541,7 +551,7 @@ void cdcacm_init(void)
 {
 	void exti15_10_isr(void);
 
-	serialno_read(serial_no);
+	serial_no_read(serial_no, sizeof(serial_no));
 
 	usbdev = usbd_init(&USB_DRIVER, &dev, &config, usb_strings,
 			    sizeof(usb_strings)/sizeof(char *),
@@ -557,4 +567,3 @@ void USB_ISR(void)
 {
 	usbd_poll(usbdev);
 }
-

@@ -43,13 +43,9 @@ struct target_flash {
 	flash_write_func write;
 	flash_done_func done;
 	target *t;
-	struct target_flash *next;
-	int align;
 	uint8_t erased;
-
-	/* For buffered flash */
 	size_t buf_size;
-	flash_write_func write_buf;
+	struct target_flash *next;
 	target_addr buf_addr;
 	void *buf;
 };
@@ -76,6 +72,8 @@ struct breakwatch {
 	uint32_t reserved[4]; /* for use by the implementing driver */
 };
 
+#define MAX_CMDLINE 81
+
 struct target_s {
 	bool attached;
 	struct target_controller *tc;
@@ -96,6 +94,8 @@ struct target_s {
 	const char *tdesc;
 	void (*regs_read)(target *t, void *data);
 	void (*regs_write)(target *t, const void *data);
+	ssize_t (*reg_read)(target *t, int reg, void *data, size_t max);
+	ssize_t (*reg_write)(target *t, int reg, const void *data, size_t size);
 
 	/* Halt/resume functions */
 	void (*reset)(target *t);
@@ -111,15 +111,18 @@ struct target_s {
 
 	/* target-defined options */
 	unsigned target_options;
-	uint32_t idcode;
+	uint16_t t_designer;
+	uint16_t idcode;
+	uint32_t target_storage;
 
-	/* Target memory map */
-	char *dyn_mem_map;
 	struct target_ram *ram;
 	struct target_flash *flash;
 
 	/* Other stuff */
 	const char *driver;
+	const char *core;
+	char cmdline[MAX_CMDLINE];
+	target_addr heapinfo[4];
 	struct target_command_s *commands;
 
 	struct target_s *next;
@@ -128,12 +131,10 @@ struct target_s {
 	void (*priv_free)(void *);
 };
 
+void target_mem_map_free(target *t);
 void target_add_commands(target *t, const struct command_s *cmds, const char *name);
 void target_add_ram(target *t, target_addr start, uint32_t len);
 void target_add_flash(target *t, struct target_flash *f);
-int target_flash_write_buffered(struct target_flash *f,
-                                target_addr dest, const void *src, size_t len);
-int target_flash_done_buffered(struct target_flash *f);
 
 /* Convenience function for MMIO access */
 uint32_t target_mem_read32(target *t, uint32_t addr);
@@ -169,19 +170,23 @@ int tc_system(target *t, target_addr cmd, size_t cmdlen);
  */
 bool stm32f1_probe(target *t);
 bool stm32f4_probe(target *t);
+bool stm32h7_probe(target *t);
 bool stm32l0_probe(target *t);
 bool stm32l1_probe(target *t);
 bool stm32l4_probe(target *t);
 bool lmi_probe(target *t);
 bool lpc11xx_probe(target *t);
 bool lpc15xx_probe(target *t);
+bool lpc17xx_probe(target *t);
 bool lpc43xx_probe(target *t);
+bool lpc546xx_probe(target *t);
 bool sam3x_probe(target *t);
 bool sam4l_probe(target *t);
 bool nrf51_probe(target *t);
 bool samd_probe(target *t);
+bool samx5x_probe(target *t);
 bool kinetis_probe(target *t);
 bool efm32_probe(target *t);
-
+bool msp432_probe(target *t);
+bool ke04_probe(target *t);
 #endif
-

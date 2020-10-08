@@ -68,11 +68,10 @@ void usbuart_init(void)
 
 	/* Setup timer for running deferred FIFO processing */
 	USBUSART_TIM_CLK_EN();
-	timer_reset(USBUSART_TIM);
 	timer_set_mode(USBUSART_TIM, TIM_CR1_CKD_CK_INT,
 			TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
 	timer_set_prescaler(USBUSART_TIM,
-			rcc_ppre2_frequency / USBUART_TIMER_FREQ_HZ * 2 - 1);
+			rcc_apb2_frequency / USBUART_TIMER_FREQ_HZ * 2 - 1);
 	timer_set_period(USBUSART_TIM,
 			USBUART_TIMER_FREQ_HZ / USBUART_RUN_FREQ_HZ - 1);
 
@@ -217,7 +216,10 @@ void USBUSART_ISR(void)
 {
 	uint32_t err = USART_SR(USBUSART);
 	char c = usart_recv(USBUSART);
-	if (err & (USART_SR_ORE | USART_SR_FE))
+#if !defined(USART_SR_NE) && defined(USART_ISR_NF)
+# define USART_SR_NE USART_ISR_NF
+#endif
+	if (err & (USART_FLAG_ORE | USART_FLAG_FE | USART_SR_NE))
 		return;
 
 	/* Turn on LED */
@@ -250,3 +252,61 @@ void USBUSART_TIM_ISR(void)
 	/* process FIFO */
 	usbuart_run();
 }
+
+#ifdef ENABLE_DEBUG
+enum {
+	RDI_SYS_OPEN = 0x01,
+	RDI_SYS_WRITE = 0x05,
+	RDI_SYS_ISTTY = 0x09,
+};
+
+int rdi_write(int fn, const char *buf, size_t len)
+{
+	(void)fn;
+#if defined(PLATFORM_HAS_DEBUG)
+	if (debug_bmp)
+		return len - usbuart_debug_write(buf, len);
+#else
+	(void)buf;
+	(void)len;
+#endif
+	return 0;
+}
+
+struct ex_frame {
+	union {
+		int syscall;
+		int retval;
+	};
+	const int *params;
+	uint32_t r2, r3, r12, lr, pc;
+};
+
+void debug_monitor_handler_c(struct ex_frame *sp)
+{
+	/* Return to after breakpoint instruction */
+	sp->pc += 2;
+
+	switch (sp->syscall) {
+	case RDI_SYS_OPEN:
+		sp->retval = 1;
+		break;
+	case RDI_SYS_WRITE:
+		sp->retval = rdi_write(sp->params[0], (void*)sp->params[1], sp->params[2]);
+		break;
+	case RDI_SYS_ISTTY:
+		sp->retval = 1;
+		break;
+	default:
+		sp->retval = -1;
+	}
+
+}
+
+asm(".globl debug_monitor_handler\n"
+    ".thumb_func\n"
+    "debug_monitor_handler: \n"
+    "    mov r0, sp\n"
+    "    b debug_monitor_handler_c\n");
+
+#endif
